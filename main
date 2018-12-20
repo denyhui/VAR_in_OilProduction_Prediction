@@ -1,5 +1,4 @@
 import tkinter
-from tkinter import ttkimport tkinter
 from tkinter import ttk
 import numpy as np
 import pandas as pd
@@ -45,36 +44,32 @@ class window:
         self.read_frm = tkinter.Frame(self.root)
 
         self.P_read_frm = tkinter.Frame(self.read_frm)
-        self.P_rn_frm = tkinter.Frame(self.P_read_frm)
 
-        tkinter.Label(self.P_rn_frm, text='表格内年月表头').grid()
-        self.P_cl_1 = ttk.Combobox(self.P_rn_frm)
+        tkinter.Label(self.P_read_frm, text='表格内年月表头').grid()
+        self.P_cl_1 = ttk.Combobox(self.P_read_frm)
         self.P_cl_1.grid()
-        tkinter.Label(self.P_rn_frm, text='表格内井号表头').grid()
-        self.P_cl_2 = ttk.Combobox(self.P_rn_frm)
+        tkinter.Label(self.P_read_frm, text='表格内井号表头').grid()
+        self.P_cl_2 = ttk.Combobox(self.P_read_frm)
         self.P_cl_2.grid()
-        tkinter.Label(self.P_rn_frm, text='表格内单位时间产量表头').grid()
-        self.P_cl_3 = ttk.Combobox(self.P_rn_frm)
+        tkinter.Label(self.P_read_frm, text='表格内单位时间产量表头').grid()
+        self.P_cl_3 = ttk.Combobox(self.P_read_frm)
         self.P_cl_3.grid()
 
-        tkinter.Button(self.P_rn_frm, text='读取采出井数据', command=self.read_csv_P).grid()
-        self.P_rn_frm.grid()
+        tkinter.Button(self.P_read_frm, text='读取采出井数据', command=self.read_csv_P).grid()
         self.P_read_frm.grid(row=0, column=0)
 
         self.I_read_frm = tkinter.Frame(self.read_frm)
-        self.I_rn_frm = tkinter.Frame(self.I_read_frm)
 
-        tkinter.Label(self.I_rn_frm, text='表格内年月表头').grid()
-        self.I_cl_1 = ttk.Combobox(self.I_rn_frm)
+        tkinter.Label(self.I_read_frm, text='表格内年月表头').grid()
+        self.I_cl_1 = ttk.Combobox(self.I_read_frm)
         self.I_cl_1.grid()
-        tkinter.Label(self.I_rn_frm, text='表格内井号表头').grid()
-        self.I_cl_2 = ttk.Combobox(self.I_rn_frm)
+        tkinter.Label(self.I_read_frm, text='表格内井号表头').grid()
+        self.I_cl_2 = ttk.Combobox(self.I_read_frm)
         self.I_cl_2.grid()
-        tkinter.Label(self.I_rn_frm, text='表格内单位时间注入量表头').grid()
-        self.I_cl_3 = ttk.Combobox(self.I_rn_frm)
+        tkinter.Label(self.I_read_frm, text='表格内单位时间注入量表头').grid()
+        self.I_cl_3 = ttk.Combobox(self.I_read_frm)
         self.I_cl_3.grid()
-        tkinter.Button(self.I_rn_frm, text='读取注入井数据', command=self.read_csv_I).grid()
-        self.I_rn_frm.grid()
+        tkinter.Button(self.I_read_frm, text='读取注入井数据', command=self.read_csv_I).grid()
         self.I_read_frm.grid(row=0, column=1)
 
         self.aux_frm = tkinter.Frame(self.read_frm)
@@ -290,7 +285,6 @@ class window:
         assert self.icol_num is not None, '脉冲响应分析需要输入注入井数据'
         self.irf_window = m_irf_window(self.total_mean, self.result, self.pcol_num, self.icol_num)
 
-
 class m_irf_window:
     def __init__(self, total, results, p_col_num, i_col_num):
         self.total = total
@@ -299,7 +293,7 @@ class m_irf_window:
         self.i_col_num = i_col_num
         self.root1 = tkinter.Tk()
         self.root1.title('脉冲响应分析')
-        self.root1.geometry('185x150')
+        self.root1.geometry('180x135')
 
         tkinter.Label(self.root1, text='采出井号').grid()
         self.cl_1 = ttk.Combobox(self.root1, )
@@ -347,10 +341,11 @@ class m_irf_window:
         plt.plot(np.arange(max_n),self.phis[:,i,j])
         plt.title(r'%s$\rightarrow$%s'%(self.cl_2.get(),self.cl_1.get()),fontsize=20)
         plt.xlabel('滞后阶数',fontsize=20)
-        plt.xticks(fontsize=20)
-        plt.yticks(fontsize=20)
+        plt.xticks(fontsize=15)
+        plt.yticks(fontsize=15)
         plt.show()
 
 
 if __name__ == "__main__":
     win = window()
+

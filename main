@@ -1,0 +1,340 @@
+import tkinter
+from tkinter import ttk
+import numpy as np
+import pandas as pd
+from sklearn.metrics import r2_score, mean_absolute_error
+from statsmodels.tsa.vector_ar.var_model import VAR
+from statsmodels.compat.python import iteritems, StringIO, lrange
+from statsmodels.iolib import SimpleTable
+from collections import defaultdict
+import matplotlib.pyplot as plt
+from functools import partial
+
+_default_table_fmt = dict(
+    empty_cell='',
+    colsep='  ',
+    row_pre='',
+    row_post='',
+    table_dec_above='=',
+    table_dec_below='=',
+    header_dec_below='-',
+    header_fmt='%s',
+    stub_fmt='%s',
+    title_align='c',
+    header_align='r',
+    data_aligns='r',
+    stubs_align='l',
+    fmt='txt'
+)
+
+
+class window:
+    def __init__(self):
+        np.random.seed(1)
+        self.Pdata = None
+        self.Idata = None
+        self.total = None
+        self.result = None
+        self.root = tkinter.Tk()
+        self.root.title('产量预测应用')
+        self.root.geometry('900x400')
+
+        self.read_frm = tkinter.Frame(self.root)
+
+        self.P_read_frm = tkinter.Frame(self.read_frm)
+        self.P_rn_frm = tkinter.Frame(self.P_read_frm)
+
+        tkinter.Label(self.P_rn_frm, text='表格内年月表头').grid()
+        self.P_cl_1 = ttk.Combobox(self.P_rn_frm)
+        self.P_cl_1.grid()
+        tkinter.Label(self.P_rn_frm, text='表格内井号表头').grid()
+        self.P_cl_2 = ttk.Combobox(self.P_rn_frm)
+        self.P_cl_2.grid()
+        tkinter.Label(self.P_rn_frm, text='表格内单位时间产量表头').grid()
+        self.P_cl_3 = ttk.Combobox(self.P_rn_frm)
+        self.P_cl_3.grid()
+
+        tkinter.Button(self.P_rn_frm, text='读取采出井数据', command=self.read_csv_P).grid()
+        self.P_rn_frm.grid()
+        self.P_read_frm.grid(row=0, column=0)
+
+        self.I_read_frm = tkinter.Frame(self.read_frm)
+        self.I_rn_frm = tkinter.Frame(self.I_read_frm)
+
+        tkinter.Label(self.I_rn_frm, text='表格内年月表头').grid()
+        self.I_cl_1 = ttk.Combobox(self.I_rn_frm)
+        self.I_cl_1.grid()
+        tkinter.Label(self.I_rn_frm, text='表格内井号表头').grid()
+        self.I_cl_2 = ttk.Combobox(self.I_rn_frm)
+        self.I_cl_2.grid()
+        tkinter.Label(self.I_rn_frm, text='表格内单位时间注入量表头').grid()
+        self.I_cl_3 = ttk.Combobox(self.I_rn_frm)
+        self.I_cl_3.grid()
+        tkinter.Button(self.I_rn_frm, text='读取注入井数据', command=self.read_csv_I).grid()
+        self.I_rn_frm.grid()
+        self.I_read_frm.grid(row=0, column=1)
+
+        self.aux_frm = tkinter.Frame(self.read_frm)
+
+        self.lag_command = tkinter.Button(self.aux_frm, text='滞后阶数分析', command=self.maxlag_selection,
+                                          state=tkinter.DISABLED)
+        self.lag_command.grid(row=4, column=0)
+
+        self.validate_command = tkinter.Button(self.aux_frm, text='拟合并验证', command=self.fit_and_validate,
+                                               state=tkinter.DISABLED)
+        self.validate_command.grid(row=4, column=1)
+
+        self.predict_command = tkinter.Button(self.aux_frm, text='拟合并预测', command=self.fit_and_predict,
+                                              state=tkinter.DISABLED)
+        self.predict_command.grid(row=4, column=2)
+
+        self.fitness_var = tkinter.StringVar()
+        tkinter.Label(self.aux_frm, textvariable=self.fitness_var).grid(row=6)
+
+        tkinter.Label(self.aux_frm, text='滞后阶数', ).grid(row=1, column=0)
+        self.Lag_cl = ttk.Combobox(self.aux_frm)
+        self.Lag_cl.grid(row=1, column=1)
+        self.Lag_cl['values'] = list(range(1, 25))
+        self.Lag_cl.current(0)
+
+        def new_root_permission():
+            self.new_button['state'] = tkinter.NORMAL if self.v2.get() else tkinter.DISABLED
+
+        self.v2 = tkinter.IntVar()
+        self.v2.set(0)
+        tkinter.Checkbutton(self.aux_frm, text='使用注入井数据', variable=self.v2, command=new_root_permission).grid(row=3,
+                                                                                                              column=0)
+        self.new_button = tkinter.Button(self.aux_frm, text='脉冲响应分析', command=self.m_irf, state=tkinter.DISABLED)
+        self.new_button.grid(row=4, column=3)
+
+        tkinter.Label(self.aux_frm, text='跳过时间步数', ).grid(row=0, column=0)
+        self.year_cl = ttk.Combobox(self.aux_frm)
+        self.year_cl['values'] = list(range(300))
+        self.year_cl.current(0)
+        self.year_cl.grid(row=0, column=1)
+
+        self.Info_frm = tkinter.Frame(self.root)
+        self.InfoText = tkinter.Text(self.Info_frm, width=60, height=25)
+        self.InfoText.grid()
+        self.Info_frm.grid(row=0, column=1, ipadx=10, ipady=10, padx=10, pady=10)
+
+        self.read_frm.grid(row=0)
+        self.aux_frm.grid(ipady=10, pady=10)
+
+        self.root.mainloop()
+
+    def read_csv_P(self, ):
+        from tkinter import filedialog
+        file_path = filedialog.askopenfilename()
+        try:
+            self.Pdata = pd.read_csv(file_path)
+        except:
+            self.Pdata = pd.read_csv(file_path, encoding='gbk')
+        finally:
+            col = list(self.Pdata.columns)
+            self.P_cl_1['values'] = col
+            self.P_cl_2['values'] = col
+            self.P_cl_3['values'] = col
+        try:
+            self.P_cl_1.current(col.index('年月'))
+            self.P_cl_2.current(col.index('井号'))
+            self.P_cl_3.current(col.index('日产油量'))
+        except:
+            self.P_cl_1.current(0)
+            self.P_cl_2.current(0)
+            self.P_cl_3.current(0)
+        self.validate_command['state'] = tkinter.NORMAL
+        self.lag_command['state'] = tkinter.NORMAL
+        self.predict_command['state'] = tkinter.NORMAL
+
+    def read_csv_I(self, ):
+        from tkinter import filedialog
+        file_path = filedialog.askopenfilename()
+        try:
+            self.Idata = pd.read_csv(file_path)
+        except:
+            self.Idata = pd.read_csv(file_path, encoding='gbk')
+        finally:
+            col = list(self.Idata.columns)
+            self.I_cl_1['values'] = col
+            self.I_cl_2['values'] = col
+            self.I_cl_3['values'] = col
+        try:
+            self.I_cl_1.current(col.index('年月'))
+            self.I_cl_2.current(col.index('井号'))
+            self.I_cl_3.current(col.index('日注入量'))
+        except:
+            self.I_cl_1.current(0)
+            self.I_cl_2.current(0)
+            self.I_cl_3.current(0)
+
+    def data_prepro(self):
+        assert self.Pdata is not None, '未读取采出井数据'
+        assert self.P_cl_1.get(), '未选取采出井年月表头'
+        assert self.P_cl_2.get(), '未选取采出井井号表头'
+        assert self.P_cl_3.get(), '未选取采出井流量表头'
+        Pdata = self.Pdata.sort_values(by=self.P_cl_1.get())
+        Pdata.loc[Pdata[self.P_cl_3.get()] < 0, self.P_cl_3.get()] = 0
+        Ptimeseries = Pdata.pivot_table(columns=self.P_cl_2.get(), index=self.P_cl_1.get(),
+                                        values=self.P_cl_3.get(), fill_value=0)
+        Ptimeseries.columns = ['%s_prod' % c for c in Ptimeseries.columns]
+        if self.v2.get() == 1:
+            assert self.Idata is not None, '未读取注入井数据'
+            assert self.I_cl_1.get(), '未选取注入井年月表头'
+            assert self.I_cl_2.get(), '未选取注入井井号表头'
+            assert self.I_cl_3.get(), '未选取注入井流量表头'
+            Idata = self.Idata.sort_values(by=self.I_cl_1.get(), )
+            Idata.loc[Idata[self.I_cl_3.get()] < 0, self.I_cl_3.get()] = 0
+            Itimeseries = Idata.pivot_table(columns=self.I_cl_2.get(), index=self.I_cl_1.get(),
+                                            values=self.I_cl_3.get(), fill_value=0)
+            Itimeseries.columns = ['%s_inj' % c for c in Itimeseries.columns]
+            I_mintime = min(Idata[self.I_cl_1.get()])
+            P_mintime = min(Pdata[self.P_cl_1.get()])
+            if I_mintime > P_mintime:
+                skip_i = list(Ptimeseries.index).index(I_mintime)
+                Ptimeseries = Ptimeseries[skip_i:]
+            else:
+                skip_i = list(Itimeseries.index).index(P_mintime)
+                Itimeseries = Itimeseries[skip_i:]
+            self.total = pd.concat((Itimeseries, Ptimeseries), axis=1)
+
+            self.total.index = pd.to_datetime(self.total.index.astype(str), format='%Y%m')
+            self.total_mean = self.total.rolling(window=4).mean()[4:]
+            self.pcol_num = np.array([list(self.total.columns).index(c) for c in self.total.columns if 'prod' in c])
+            self.icol_num = np.array([list(self.total.columns).index(c) for c in self.total.columns if 'inj' in c])
+        else:
+            self.total = Ptimeseries
+            self.total.index = pd.to_datetime(self.total.index.astype(str), format='%Y%m')
+            self.total_mean = self.total.rolling(window=4).mean()[4:]
+            self.pcol_num = np.array([list(self.total.columns).index(c) for c in self.total.columns if 'prod' in c])
+
+    def prepare_Y(self, skip_i, part_i):
+        Y = np.log1p(self.total_mean[skip_i:part_i].iloc[:, self.pcol_num])
+        Y += np.random.rand(*Y.shape) / 1e10
+        if self.v2.get():
+            Y_exog = np.log1p(self.total_mean[skip_i:part_i].iloc[:, self.icol_num])
+            Y_exog += np.random.rand(*Y_exog.shape) / 1e10
+            Y_exog_future = np.log1p(self.total_mean[part_i:].iloc[:, self.icol_num])
+            Y_exog_future += np.random.rand(*Y_exog_future.shape) / 1e10
+        else:
+            Y_exog = None
+            Y_exog_future = None
+        return Y, Y_exog, Y_exog_future
+
+    def maxlag_selection(self):
+        def get_ic_table(ics, selected_orders):
+            cols = sorted(ics)
+            data = np.array([["%#10.4g" % v for v in ics[c]] for c in cols],
+                            dtype=object).T
+            for i, col in enumerate(cols):
+                idx = int(selected_orders[col]), i
+                data[idx] = data[idx] + '*'
+            fmt = dict(_default_table_fmt,
+                       data_fmts=("%s",) * len(cols))
+            buf = StringIO()
+            table = SimpleTable(data, cols, lrange(len(data)),
+                                title='VAR Order Selection', txt_fmt=fmt)
+            buf.write(str(table) + '\n')
+            buf.write('* Minimum' + '\n')
+            return buf.getvalue()
+
+        self.data_prepro()
+        skip_i = int(self.year_cl.get())
+
+        assert skip_i < len(self.total) - self.total.shape[1], '跳过步数必须小于时间步数'
+        maxlags = int(self.Lag_cl.get())
+        Y, Y_exog, Y_exog_future = self.prepare_Y(skip_i, -10)
+
+        model = VAR(endog=Y, exog=Y_exog)
+        ics = defaultdict(list)
+        for p in range(maxlags + 1):
+            result = model._estimate_var(p, offset=maxlags - p)
+            for k, v in iteritems(result.info_criteria):
+                ics[k].append(v)
+        selected_orders = dict((k, np.array(v).argmin())
+                               for k, v in iteritems(ics))
+        t_str = get_ic_table(ics, selected_orders)
+        t_str += '\n%s' % str(selected_orders)
+        self.InfoText.delete(0.0, tkinter.END)
+        self.InfoText.insert(0.0, t_str)
+
+    def fit_and_validate(self, ):
+        self.data_prepro()
+        maxlags = int(self.Lag_cl.get())
+        skip_i = int(self.year_cl.get())
+        assert skip_i < len(self.total) - self.total.shape[1], '跳过步数必须小于时间步数'
+        Y, Y_exog, Y_exog_future = self.prepare_Y(skip_i, -10)
+        model = VAR(endog=Y, exog=Y_exog)
+        self.result = model.fit(maxlags=maxlags)
+        y_pred = np.exp(self.result.forecast(model.y, steps=10, exog_future=Y_exog_future).clip(0, 10000)) - 1
+        score = mean_absolute_error(y_pred=y_pred, y_true=self.total_mean[-10:].values[:, self.pcol_num])
+        self.fitness_var.set('拟合完成\n平均绝对误差:%.6f' % score)
+
+    def fit_and_predict(self, ):
+        self.data_prepro()
+        maxlags = int(self.Lag_cl.get())
+        skip_i = int(self.year_cl.get())
+        assert skip_i < len(self.total) - self.total.shape[1], '跳过步数必须小于时间步数'
+        Y, Y_exog, Y_exog_future = self.prepare_Y(skip_i, -10)
+        model = VAR(endog=Y, exog=Y_exog)
+        self.result = model.fit(maxlags=maxlags)
+        y_pred = np.exp(self.result.forecast(model.y, steps=10, exog_future=Y_exog_future).clip(0, 10000)) - 1
+
+    def m_irf(self):
+        assert self.result is not None, '模型拟合后才可进行脉冲响应分析'
+        assert self.icol_num is not None, '脉冲响应分析需要输入注入井数据'
+        self.irf_window = m_irf_window(self.total_mean, self.result, self.pcol_num, self.icol_num)
+
+
+class m_irf_window:
+    def __init__(self, total, results, p_col_num, i_col_num):
+        self.total = total
+        self.results = results
+        self.p_col_num = p_col_num
+        self.i_col_num = i_col_num
+        self.root1 = tkinter.Tk()
+        self.root1.title('脉冲响应分析')
+        self.root1.geometry('200x100')
+
+        tkinter.Label(self.root1, text='注入井号').grid()
+        self.cl_1 = ttk.Combobox(self.root1, )
+        self.cl_1.grid()
+        self.cl_1['values'] = list(self.total.columns[self.i_col_num])
+        self.cl_1.current(0)
+
+        tkinter.Label(self.root1, text='采出井号').grid()
+        self.cl_2 = ttk.Combobox(self.root1, )
+        self.cl_2.grid()
+        self.cl_2['values'] = list(self.total.columns[self.p_col_num])
+        self.cl_2.current(0)
+
+        self.phis = self.exog_irf()
+
+        tkinter.Button(self.root1, text='作图',command=lambda x:x).grid()
+
+        self.root1.mainloop()
+
+    def exog_irf(self, max_n=10):
+        results = self.results
+        p, k, k = results.coefs.shape
+        k_i = results.coefs_exog.shape[1]
+
+        phis = np.zeros((max_n + 1, k, k_i))
+        phis[0] = np.dot(np.eye(k), results.coefs_exog)
+        for i in range(1, max_n + 1):
+            for j in range(1, i + 1):
+                if j > p:
+                    break
+                phis[i] += np.dot(results.coefs[j - 1], phis[i - j])
+        return phis
+
+    def plot(self):
+        imp_name=self.cl_1.get()
+        resp_name=self.cl_2.get()
+
+        fig, ax = plt.subplots()
+        plt.plot()
+
+
+if __name__ == "__main__":
+    win = window()

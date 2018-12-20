@@ -1,4 +1,5 @@
 import tkinter
+from tkinter import ttkimport tkinter
 from tkinter import ttk
 import numpy as np
 import pandas as pd
@@ -10,6 +11,8 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 from functools import partial
 
+plt.rcParams['font.sans-serif'] = ['SimHei']  # 解决中文显示问题-设置字体为黑体
+plt.rcParams['axes.unicode_minus'] = False  # 解决保存图像是负号'-'显示为方块的问题
 _default_table_fmt = dict(
     empty_cell='',
     colsep='  ',
@@ -96,6 +99,7 @@ class window:
         self.Lag_cl.grid(row=1, column=1)
         self.Lag_cl['values'] = list(range(1, 25))
         self.Lag_cl.current(0)
+        self.Lag_cl['state']='readonly'
 
         def new_root_permission():
             self.new_button['state'] = tkinter.NORMAL if self.v2.get() else tkinter.DISABLED
@@ -111,6 +115,7 @@ class window:
         self.year_cl = ttk.Combobox(self.aux_frm)
         self.year_cl['values'] = list(range(300))
         self.year_cl.current(0)
+        self.year_cl['state']='readonly'
         self.year_cl.grid(row=0, column=1)
 
         self.Info_frm = tkinter.Frame(self.root)
@@ -294,23 +299,25 @@ class m_irf_window:
         self.i_col_num = i_col_num
         self.root1 = tkinter.Tk()
         self.root1.title('脉冲响应分析')
-        self.root1.geometry('200x100')
-
-        tkinter.Label(self.root1, text='注入井号').grid()
-        self.cl_1 = ttk.Combobox(self.root1, )
-        self.cl_1.grid()
-        self.cl_1['values'] = list(self.total.columns[self.i_col_num])
-        self.cl_1.current(0)
+        self.root1.geometry('185x150')
 
         tkinter.Label(self.root1, text='采出井号').grid()
+        self.cl_1 = ttk.Combobox(self.root1, )
+        self.cl_1.grid()
+        self.cl_1['values'] = list(self.total.columns[self.p_col_num])
+        self.cl_1.current(0)
+        self.cl_1['state']='readonly'
+
+        tkinter.Label(self.root1, text='注入井号').grid()
         self.cl_2 = ttk.Combobox(self.root1, )
         self.cl_2.grid()
-        self.cl_2['values'] = list(self.total.columns[self.p_col_num])
+        self.cl_2['values'] = list(self.total.columns[self.i_col_num])
         self.cl_2.current(0)
+        self.cl_2['state'] = 'readonly'
 
         self.phis = self.exog_irf()
 
-        tkinter.Button(self.root1, text='作图',command=lambda x:x).grid()
+        tkinter.Button(self.root1, text='作图',command=self.plot).grid()
 
         self.root1.mainloop()
 
@@ -332,8 +339,17 @@ class m_irf_window:
         imp_name=self.cl_1.get()
         resp_name=self.cl_2.get()
 
+        max_n=self.phis.shape[0]
+        i=self.cl_1['values'].index(self.cl_1.get())
+        j=self.cl_2['values'].index(self.cl_2.get())
+
         fig, ax = plt.subplots()
-        plt.plot()
+        plt.plot(np.arange(max_n),self.phis[:,i,j])
+        plt.title(r'%s$\rightarrow$%s'%(self.cl_2.get(),self.cl_1.get()),fontsize=20)
+        plt.xlabel('滞后阶数',fontsize=20)
+        plt.xticks(fontsize=20)
+        plt.yticks(fontsize=20)
+        plt.show()
 
 
 if __name__ == "__main__":

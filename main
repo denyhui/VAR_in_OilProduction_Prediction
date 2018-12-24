@@ -6,38 +6,27 @@ import tkinter.messagebox
 # basic
 import numpy as np
 import pandas as pd
+import numpy.linalg as la
 from sklearn.metrics import r2_score, mean_absolute_error
+import scipy
 from statsmodels.tsa.vector_ar.var_model import VAR
 from statsmodels.compat.python import iteritems, StringIO, lrange
 from statsmodels.iolib import SimpleTable
-
+import statsmodels.tsa.vector_ar.util as util
+from statsmodels.tools.tools import chain_dot
 # plotting
 import matplotlib.pyplot as plt
 
 # util
 import re
 import os
+import tqdm
 from collections import defaultdict
 from functools import partial
 
 plt.rcParams['font.sans-serif'] = ['SimHei']  # 解决中文显示问题-设置字体为黑体
 plt.rcParams['axes.unicode_minus'] = False  # 解决保存图像是负号'-'显示为方块的问题
-_default_table_fmt = dict(
-    empty_cell='',
-    colsep='  ',
-    row_pre='',
-    row_post='',
-    table_dec_above='=',
-    table_dec_below='=',
-    header_dec_below='-',
-    header_fmt='%s',
-    stub_fmt='%s',
-    title_align='c',
-    header_align='r',
-    data_aligns='r',
-    stubs_align='l',
-    fmt='txt'
-)
+
 
 
 class window:
@@ -47,9 +36,10 @@ class window:
         self.Idata = None
         self.total = None
         self.result = None
+        self.model = None
         self.root = tkinter.Tk()
         self.root.title('产量预测应用')
-        self.root.geometry('480x470')
+        self.root.geometry('480x490')
 
         self.tabcontrol = ttk.Notebook(self.root)
         self.tab1 = ttk.Frame(self.tabcontrol)
@@ -133,6 +123,7 @@ class window:
         self.year_cl.grid(row=2, column=2, columnspan=2)
 
         self.Info_frm = tkinter.Frame(self.tab2)
+        tkinter.Label(self.Info_frm, text='分析结果', fg='blue').grid(sticky=tkinter.W)
         self.InfoText = tkinter.Text(self.Info_frm, width=60, height=30)
         self.InfoText.grid()
         self.Info_frm.grid(row=0, column=1, ipadx=10, ipady=10, padx=10, pady=10, rowspan=2)
@@ -140,22 +131,70 @@ class window:
         self.read_frm.grid(row=0, column=0)
         self.aux_frm.grid(ipady=10, pady=10, row=1, column=0, )
 
+        def get_help():
+            temp_info = '''
+            该应用的输入为带有井名，日期，日产量或月产量的数据，注入井数据为可选输入;
+            如果未能自动识别读取文件中的输入数据，需要用户自行设置需读取数据的表头;
+            读取成功后，用户可自行选择预测函数的滞后阶数，拟合原理详见用户手册;
+            用户也可通过滞后阶数分析选项选取最优滞后阶数;
+            在拟合完成后可进行脉冲响应分析，该选项可分析注入井对采出井的影响程度;
+            '''
+            tkinter.messagebox.showinfo('帮助', temp_info)
+
+        menu_bar = tkinter.Menu(self.root)
+        self.root.config(menu=menu_bar)
+        help_menu = tkinter.Menu(menu_bar, tearoff=0)
+        help_menu.add_command(label="关于", command=get_help)
+        menu_bar.add_cascade(label="帮助", menu=help_menu)
+
         self.root.mainloop()
 
     def _read(self, ):
+        '''
+        读取逻辑及异常逻辑
+        :return: 读取结果
+        '''
         from tkinter import filedialog
         file_path = filedialog.askopenfilename()
         try:
-            data = pd.read_csv(file_path)
-        except UnicodeDecodeError:
-            data = pd.read_csv(file_path, encoding='gbk')
-        except OSError:
-            self.verbose_list.insert(0, '错误:%s' % '读取了错误的文件')
-            tkinter.messagebox.showerror('错误', '读取了错误的文件')
-            raise OSError
+            suffix = file_path.split('.')[-1]
+        except:
+            tkinter.messagebox.showerror('错误', '读取失败')
+            raise RuntimeError
+        if suffix == 'csv':
+            try:
+                data = pd.read_csv(file_path)
+            except UnicodeDecodeError:
+                data = pd.read_csv(file_path, encoding='gbk')
+            except OSError:
+                try:
+                    data = pd.read_csv(file_path, encoding='gbk', engine='python')
+                except OSError:
+                    self.verbose_list.insert(0, '错误:%s' % '读取了错误的文件')
+                    tkinter.messagebox.showerror('错误', '读取了错误的文件')
+                    raise OSError
+        elif suffix == 'xlsx':
+            try:
+                data = pd.read_excel(file_path)
+            except UnicodeDecodeError:
+                data = pd.read_excel(file_path, encoding='gbk')
+            except OSError:
+                try:
+                    data = pd.read_excel(file_path, encoding='gbk', engine='python')
+                except OSError:
+                    self.verbose_list.insert(0, '错误:%s' % '读取了错误的文件')
+                    tkinter.messagebox.showerror('错误', '读取了错误的文件')
+                    raise OSError
+        else:
+            tkinter.messagebox.showerror('错误', '未知错误')
+            raise RuntimeError
         return data
 
     def read_csv_P(self, ):
+        '''
+        读取采出井报告数据,若其中包含年月,井号,日采油量等表头则设为默认表头
+        :return: 
+        '''
         self.Pdata = self._read()
         col = list(self.Pdata.columns)
         self.P_cl_1['values'] = col
@@ -174,6 +213,10 @@ class window:
         self.predict_command['state'] = tkinter.NORMAL
 
     def read_csv_I(self, ):
+        '''
+        读取注入井报告数据,若其中包含年月,井号,日注入量等表头则设为默认表头
+        :return: 原始注入井报告数据
+        '''
         self.Idata = self._read()
         col = list(self.Idata.columns)
         self.I_cl_1['values'] = col
@@ -189,6 +232,10 @@ class window:
             self.I_cl_3.current(0)
 
     def data_prepro(self):
+        '''
+        该方法将油田的日报/月报数据转换为日期/井号格式的表格数据
+        :return: 日期/井号格式的表格数据
+        '''
         self.m_assert_error(self.Pdata is not None, '未读取采出井数据')
         self.m_assert_error(self.P_cl_1.get(), '未选取采出井年月表头')
         self.m_assert_error(self.P_cl_2.get(), '未选取采出井井号表头')
@@ -235,6 +282,12 @@ class window:
         self.maxlags = int(self.Lag_cl.get())
 
     def prepare_Y(self, skip_i, part_i):
+        '''
+        该方法为预处理步骤，包括log1p化及平滑化
+        :param skip_i: 跳过的时间步长数
+        :param part_i: 若是验证模型，则该值默认为n-10,预测则为n
+        :return: 
+        '''
         Y = self.total_mean[skip_i:part_i].iloc[:, self.pcol_num]
         Y = pd.DataFrame(np.log1p(Y), columns=Y.columns, index=Y.index)
         Y += np.random.rand(*Y.shape) / 1e10
@@ -250,7 +303,33 @@ class window:
         return Y, Y_future, Y_exog, Y_exog_future
 
     def maxlag_selection(self):
+        '''
+        最大滞后阶数选择
+        :return: 不同准则下最优滞后阶数
+        '''
         def get_ic_table(ics, selected_orders):
+            '''
+            该方法将滞后阶数结果转换为表格化的分析结果
+            :param ics: 滞后阶数结果
+            :param selected_orders: 最大滞后阶数
+            :return: 返回表格化的滞后阶数分析结果
+            '''
+            _default_table_fmt = dict(
+                empty_cell='',
+                colsep='  ',
+                row_pre='',
+                row_post='',
+                table_dec_above='=',
+                table_dec_below='=',
+                header_dec_below='-',
+                header_fmt='%s',
+                stub_fmt='%s',
+                title_align='c',
+                header_align='r',
+                data_aligns='r',
+                stubs_align='l',
+                fmt='txt'
+            )
             cols = sorted(ics)
             data = np.array([["%#10.4g" % v for v in ics[c]] for c in cols],
                             dtype=object).T
@@ -280,14 +359,20 @@ class window:
                                for k, v in iteritems(ics))
         t_str = get_ic_table(ics, selected_orders)
         t_str += '\n%s' % str(selected_orders)
+        self.model = model
         self.InfoText.delete(0.0, tkinter.END)
         self.InfoText.insert(0.0, t_str)
 
     def fit_and_validate(self, ):
+        '''
+        拟合并验证
+        :return: 
+        '''
         self.data_prepro()
         Y, Y_future, Y_exog, Y_exog_future = self.prepare_Y(self.skip_i, -10)
         model = VAR(endog=Y, exog=Y_exog)
-        self.result = model.fit(maxlags=self.maxlags)
+        self.result = model.fit(maxlags=self.maxlags, trend='c')
+        self.model = model
         y_pred = np.exp(self.result.forecast(model.y, steps=10, exog_future=Y_exog_future).clip(0, 10000)) - 1
         y_pred[np.isnan(y_pred)] = 0
         y_pred[np.isinf(y_pred)] = 0
@@ -296,18 +381,34 @@ class window:
         self.validate_window = m_forecast_plot_window(Y, Y_future, y_pred)
 
     def fit_and_predict(self, ):
+        '''
+        拟合并预测
+        :return: 
+        '''
         self.data_prepro()
         Y, Y_future, Y_exog, Y_exog_future = self.prepare_Y(self.skip_i, -10)
         model = VAR(endog=Y, exog=Y_exog)
         self.result = model.fit(maxlags=self.maxlags)
+        self.model = model
         y_pred = np.exp(self.result.forecast(model.y, steps=10, exog_future=Y_exog_future).clip(0, 10000)) - 1
 
     def m_irf(self):
+        '''
+        拟合完成后，进行脉冲响应分析可对注水井进行评价
+        :return: 脉冲响应分析窗口
+        '''
+        self.m_assert_error(self.model is not None, '需要才可进行脉冲响应分析')
         self.m_assert_error(self.result is not None, '模型拟合后才可进行脉冲响应分析')
         self.m_assert_error(self.icol_num is not None, '脉冲响应分析需要输入注入井数据')
-        self.irf_window = m_irf_window(self.total_mean, self.result, self.pcol_num, self.icol_num)
+        self.irf_window = m_irf_window(self.model, self.result, self.total_mean, self.pcol_num, self.icol_num)
 
     def m_assert_error(self, flag, name):
+        '''
+        断言/错误函数
+        :param flag: 断言内容
+        :param name: 错误显示内容
+        :return: 
+        '''
         try:
             assert flag
         except:
@@ -317,68 +418,203 @@ class window:
 
 
 class m_irf_window:
-    def __init__(self, total, results, p_col_num, i_col_num):
-        self.total = total
+    '''
+    脉冲响应窗口
+    '''
+    def __init__(self, model, results, total, p_col_num, i_col_num):
+        '''
+        脉冲响应窗口初始化函数
+        :param model: VAR模型
+        :param results: VAR拟合结果
+        :param total: 表格化数据体
+        :param p_col_num: 采出井索引
+        :param i_col_num: 注入井索引
+        '''
+        self.model = model
         self.results = results
+        self.total = total
+        self.z = self.results.ys_lagged
+        self.sigma_u = self.results.sigma_u
         self.p_col_num = p_col_num
         self.i_col_num = i_col_num
+        self.periods = 10
+
         self.root = tkinter.Tk()
         self.root.title('脉冲响应分析')
-        self.root.geometry('250x135')
+        self.root.geometry('250x220')
 
-        tkinter.Label(self.root, text='采出井号').grid()
+        tkinter.Label(self.root, text='采出井号').grid(row=0)
         self.cl_1 = ttk.Combobox(self.root, )
-        self.cl_1.grid()
-        self.cl_1['values'] = list(self.total.columns[self.p_col_num])
+        self.cl_1.grid(row=1)
+
+        # self.cl_1['values'] = ['所有'] + list(self.total.columns[self.p_col_num])
+        self.cl_1['values'] = ['所有'] + ['present_' + c if self.total[c].iloc[-1] > 0.01 else c for c in
+                                        self.total.columns[self.p_col_num]]
+
         self.cl_1.current(0)
         self.cl_1['state'] = 'readonly'
+        for i, c in enumerate(self.total.columns[self.p_col_num]):
+            if self.total[c].iloc[-1] > 0.01:
+                self.cl_1.rowconfigure(0, {'weight': 3})
 
-        tkinter.Label(self.root, text='注入井号').grid()
+        tkinter.Label(self.root, text='注入井号').grid(row=2)
         self.cl_2 = ttk.Combobox(self.root, )
-        self.cl_2.grid()
-        self.cl_2['values'] = list(self.total.columns[self.i_col_num])
+        self.cl_2.grid(row=3)
+        # self.cl_2['values'] = ['所有'] + list(self.total.columns[self.i_col_num])
+        self.cl_2['values'] = ['所有'] + ['present_' + c if self.total[c].iloc[-1] > 0.01 else c for c in
+                                        self.total.columns[self.i_col_num]]
         self.cl_2.current(0)
         self.cl_2['state'] = 'readonly'
+        for i, c in enumerate(self.total.columns[self.i_col_num]):
+            if self.total[c].iloc[-1] > 0.01:
+                self.cl_2.rowconfigure(0, {'weight': 3})
 
-        self.phis = self.exog_irf()
+        self.max_n = 10
+        self.phis = self.exog_irf(self.results, self.max_n)
+        self.stderr = None
 
-        tkinter.Button(self.root, text='作图', command=self.plot).grid()
+        tkinter.Button(self.root, text='作图', command=self.plot).grid(row=4)
+
+        self.v = tkinter.IntVar()
+        self.v.set(0)
+        tkinter.Checkbutton(self.root, text='计算不确定性', variable=self.v, ).grid(row=5, sticky=tkinter.W)
+        self.canvas = tkinter.Canvas(self.root, width=170, height=26, bg="white")
+        self.canvas.grid(row=6)
+        self.fill_line = self.canvas.create_rectangle(2, 2, 0, 27, width=0, fill="blue")
+        self.process_vs = tkinter.StringVar()
+        self.process_vs.set('')
+        self.process_vl = tkinter.Label(self.root, fg='blue', textvariable=self.process_vs)
+        self.process_vl.grid(row=7)
 
         self.root.mainloop()
 
-    def exog_irf(self, max_n=10):
+    def exog_irf(self, results, max_n):
+        '''
+        计算脉冲响应期望均值函数
+        :param results: VAR拟合结果
+        :param max_n: 最大脉冲影响阶数
+        :return: 脉冲影响矩阵
+        '''
         results = self.results
         p, k, k = results.coefs.shape
         k_i = results.coefs_exog.shape[1]
-
-        phis = np.zeros((max_n + 1, k, k_i))
+        phis = np.zeros((self.max_n + 1, k, k_i))
         phis[0] = np.dot(np.eye(k), results.coefs_exog)
-        for i in range(1, max_n + 1):
+        for i in range(1, self.max_n + 1):
             for j in range(1, i + 1):
                 if j > p:
                     break
                 phis[i] += np.dot(results.coefs[j - 1], phis[i - j])
         return phis
 
+    def process_bar(self, x, i):
+        '''
+        进度条
+        :param x: 最大循环次数
+        :param i: 当前循环次数
+        :return: 
+        '''
+        n = i * 180 / x
+        self.canvas.coords(self.fill_line, (0, 0, n, 30))
+        self.process_vs.set(str(round(i + 1 / x, 1)) + "%")
+        self.root.update()
+
     def plot(self):
-        imp_name = self.cl_1.get()
-        resp_name = self.cl_2.get()
+        '''
+        绘制脉冲响应图,目前的不确定性分析尚未完成
+        :return: 
+        '''
+        resp_name = self.cl_1.get()
+        imp_name = self.cl_2.get()
 
-        max_n = self.phis.shape[0]
-        i = self.cl_1['values'].index(self.cl_1.get())
-        j = self.cl_2['values'].index(self.cl_2.get())
+        if resp_name == '所有' and imp_name == '所有':
+            tkinter.messagebox.showerror('错误', '不能同时选择所有注入井及采出井')
+            raise RuntimeError
+        elif resp_name == '所有':
+            j = self.cl_2['values'].index(imp_name) - 1
+            fig, ax = plt.subplots()
+            plt.plot(np.arange(self.phis.shape[0]), self.phis[:, :, j + 1].sum(axis=1))
+            plt.title(r'%s$\rightarrow$%s' % (re.sub('present_', '', imp_name), '所有'), fontsize=20)
+            plt.xlabel('滞后阶数', fontsize=15)
+            plt.xticks(fontsize=15)
+            plt.yticks(fontsize=15)
+        elif imp_name == '所有':
+            i = self.cl_1['values'].index(resp_name) - 1
+            fig, ax = plt.subplots()
+            plt.plot(np.arange(self.phis.shape[0]), self.phis[:, i, :].sum(axis=1))
+            plt.title(r'%s$\rightarrow$%s' % ('所有', re.sub('present_', '', resp_name)), fontsize=20)
+            plt.xlabel('滞后阶数', fontsize=15)
+            plt.xticks(fontsize=15)
+            plt.yticks(fontsize=15)
+        else:
+            i = self.cl_1['values'].index(resp_name)
+            j = self.cl_2['values'].index(imp_name)
+            fig, ax = plt.subplots()
+            plt.plot(np.arange(self.phis.shape[0]), self.phis[:, i, j + 1])
+            plt.title(r'%s$\rightarrow$%s' % (re.sub('present_', '', resp_name), re.sub('present_', '', imp_name)),
+                      fontsize=20)
+            plt.xlabel('滞后阶数', fontsize=15)
+            plt.xticks(fontsize=15)
+            plt.yticks(fontsize=15)
 
-        fig, ax = plt.subplots()
-        plt.plot(np.arange(max_n), self.phis[:, i, j])
-        plt.title(r'%s$\rightarrow$%s' % (resp_name, imp_name), fontsize=20)
-        plt.xlabel('滞后阶数', fontsize=15)
-        plt.xticks(fontsize=15)
-        plt.yticks(fontsize=15)
+            if self.v.get() == 1:
+                if self.stderr is None:
+                    self.stderr = self._compute_std()
+                plt.fill_between(np.arange(self.phis.shape[0]),
+                                 self.phis[:, i, j] + self.stderr[0][:, i, j],
+                                 self.phis[:, i, j] - self.stderr[1][:, i, j], alpha=0.2)
         plt.show()
+
+    def _compute_std(self, repl=100, signif=0.05, burn=100, cum=False, ):
+        '''
+        不确定性分析函数
+        :param repl: 
+        :param signif: 
+        :param burn: 
+        :param cum: 
+        :return: 
+        '''
+        ex_neqs = self.results.coefs_exog.shape[1]
+        neqs = self.results.neqs
+        k_ar = self.results.k_ar
+        coefs = self.results.coefs
+        sigma_u = self.sigma_u
+        intercept = self.results.intercept
+        nobs = self.results.nobs
+
+        ma_coll = np.zeros((repl, self.max_n + 1, neqs, ex_neqs))
+
+        def fill_coll(sim):
+            ret = VAR(sim, exog=self.model.exog[-nobs:]).fit(maxlags=k_ar, )
+            ret = self.exog_irf(self.results, self.max_n)
+            return ret.cumsum(axis=0) if cum else ret
+
+        for i in tqdm.tqdm(range(repl)):
+            sim = util.varsim(coefs, intercept, sigma_u,
+                              seed=None, steps=nobs + burn)
+            sim = sim[burn:]
+            ma_coll[i, :, :, :] = fill_coll(sim)
+            self.process_bar(repl, i)
+
+        ma_sort = np.sort(ma_coll, axis=0)  # sort to get quantiles
+        low_idx = int(round(signif / 2 * repl) - 1)
+        upp_idx = int(round((1 - signif / 2) * repl) - 1)
+        lower = ma_sort[low_idx, :, :, :]
+        upper = ma_sort[upp_idx, :, :, :]
+        return lower, upper
 
 
 class m_forecast_plot_window:
+    '''
+    预测图绘制窗口
+    '''
     def __init__(self, Y, Y_future, Y_pred):
+        '''
+        预测图绘制窗口初始化函数
+        :param Y: 训练用数据
+        :param Y_future: 待预测数据
+        :param Y_pred: 预测结果
+        '''
         self.Y = Y
         self.Y_future = Y_future
         self.Y_pred = Y_pred
@@ -403,6 +639,10 @@ class m_forecast_plot_window:
         self.root.mainloop()
 
     def plot(self):
+        '''
+        绘图函数
+        :return: 
+        '''
         sl = self.prod_lb.curselection()
         try:
             assert len(sl) > 0
@@ -413,13 +653,13 @@ class m_forecast_plot_window:
         w_num = [list(self.Y.columns).index(c) for c in w_name]
 
         c_b = ['r', 'b', 'c', 'g', 'y', 'k', 'm']
-        fig, ax = plt.subplots(figsize=(15, 15))
+        fig, ax = plt.subplots()
         i_ = 0
         for i_, i in enumerate(w_num):
             c = w_name[i_]
             # c=re.sub('prod','',c)
             plt.plot(self.Y.index, self.Y[c], c_b[i_ % 7] + '.', label='%s原始' % c)
-            plt.plot(self.Y_future.index, self.Y_pred[:, i], c_b[i_ % 7] + 'd', label='%s预测' % c)
+            plt.plot(self.Y_future.index, self.Y_pred[:, i], c_b[i_ % 7] + '-', label='%s预测' % c)
             plt.plot(self.Y_future.index, self.Y_future[c], c_b[i_ % 7] + 'x', label='%s实际' % c)
         plt.legend(loc='best', fontsize=15)
         plt.xlabel('时间', fontsize=15)

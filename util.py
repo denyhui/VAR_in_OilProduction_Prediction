@@ -5,7 +5,6 @@ import tkinter
 import scipy.stats as stats
 from tkinter import messagebox
 from tkinter import filedialog
-from statsmodels.tsa.vector_ar.var_model import VAR
 from statsmodels.compat.python import iteritems, StringIO, lrange
 from statsmodels.iolib import SimpleTable
 from sklearn.metrics import r2_score, mean_absolute_error

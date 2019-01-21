@@ -70,7 +70,17 @@ def _read():
         try:
             data = pd.read_excel(file_path)
         except UnicodeDecodeError:
-            data = pd.read_excel(file_path, encoding='gbk')
+            try:
+                data = pd.read_excel(file_path, encoding='gbk')
+            except UnicodeDecodeError:
+                try:
+                    data = pd.read_excel(file_path, encoding='gb2312')
+                except UnicodeDecodeError:
+                    try:
+                        data = pd.read_excel(file_path, encoding='gb18030')
+                    except:
+                        tkinter.messagebox.showerror('错误', '编码错误')
+                        raise RuntimeError
         except OSError:
             try:
                 data = pd.read_excel(file_path, encoding='gbk', engine='python')
